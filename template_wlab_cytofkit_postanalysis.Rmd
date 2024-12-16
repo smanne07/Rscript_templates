@@ -1,0 +1,271 @@
+---
+title: "Analysis name"
+author: "Author name"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+runtime: shiny
+output:
+  html_document:
+    toc_depth: 1
+    number_sections: true
+---
+
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message = FALSE)
+```
+
+
+```{r, include=FALSE,echo=FALSE,message = FALSE}
+##Load libraries for entire pipeline
+
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(dplyr)
+library(rio)
+library(stringr)
+library(pheatmap)
+library(ggpubr)
+library(cytofkit)
+library(viridis)
+library(readr) #for CSV reading
+library(stringi) #for stacked bar plots
+library(corrplot)
+library(tidyverse)
+library(reshape2)
+library(ggthemes)
+```
+
+
+```{r, include=FALSE}
+##Run phenograph
+
+#current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+#setwd(current_working_dir)
+
+#cytofkit_GUI() #to upload data and generate clusters
+```
+
+```{r, include=FALSE}
+##Assess your clusters using the Phenograph App
+
+#cytofkitShinyAPP()
+
+```
+
+```{r, include=FALSE}
+##Once analyzed in Phenograph, load data and load codex to translate subject ID to group identity
+
+Rdata_file=list.files(pattern = ".RData")
+codex_file=list.files(pattern = "CODEX")
+load(Rdata_file)
+CODEX <- read_csv(codex_file,col_names = FALSE)
+#-- here I just imported the file directly in the "Files" folder
+```
+
+# Cluster frequency between groups
+
+
+```{r, include=TRUE,echo=FALSE,fig.height=16, fig.width=16,message = FALSE}
+##Measure significance of clusters between groups "CyTOF_Analysis_Part3_"
+
+brewer.set <- "Set1"
+brewer.colours.treated <- brewer_pal(palette = brewer.set)(5)[c(5,1)]
+brewer.colours.3colours <- brewer_pal(palette = brewer.set)(3)[c(1,2,3)]
+brewer.colours.4colours <- brewer_pal(palette = brewer.set)(3)[c(1,2,3,4)]
+seq.brew <- brewer_pal(type = "seq", palette = 16)(9)
+
+# As a first step, we will evaluate clusters proportion, their differences among compared groups, and plot each cluster by group
+# SUBJID and Group are first two columns
+# Transpose the cytofkit_Rphenograph_cluster_cell_percentage.csv-->cytofkit_Rphenograph_cluster_cell_percentage_Transp.csv
+data_name="filename_header"
+Table = read.csv("cytofkit_Rphenograph_cluster_cell_percentage_Transp.csv", sep=",", header=TRUE, stringsAsFactors = F)
+Table$Group=as.factor(Table$Group)
+
+# Plot proportions of each cluster in each group using the code below (ONE PAGE FORMAT)
+var=colnames(Table)[3:ncol(Table)]
+plot_func=function(variable){
+  a <- ggplot(data=Table, aes(x=Group, y=get(variable), fill=Group))
+  a <- a + geom_boxplot(colour="black", width=0.3, fatten=1, alpha=0.6, size=0.8, outlier.shape=NA)
+  a <- a + geom_jitter(width=0.1, size=3, alpha=1)
+  a <- a + scale_fill_manual(values = brewer.colours.4colours)
+  a <- a + theme_bw()
+  a <- a + ylab(paste0("%", variable))
+  a <- a + theme(legend.title=element_blank()) 
+  a <- a + theme(legend.position="none")
+  a <- a + theme(axis.text=element_text(size=12, face="bold"), axis.text.x=element_text(vjust=2, size=12, face="bold"))
+  a <- a + theme(panel.border = element_rect(linetype = "solid", size=1, colour = "black"))
+  a <- a + theme(axis.title=element_text(size=12, face="bold"),axis.ticks=element_line(size=1))
+  a
+}
+clusterstoplot=lapply(var,plot_func)
+filename=paste(data_name,"boxplots.pdf",sep="_")
+#pdf(filename,width=20, height=20)
+ggarrange(plotlist = clusterstoplot) #fromggpubr
+#dev.off()
+
+#Creating plot of p values for all pairwise comparisons
+filename=paste(data_name,"pvaluetable.pdf",sep="_")
+z = 6
+#pdf(filename, width = 20, height = 20)
+par(mfrow=c(z,z))
+#Calculations of pairwise t tests.
+ttest_df_l<-list()
+pval_df_l<-list()
+for(i in 3:ncol(Table)){
+  ttest_df<-pairwise.t.test(Table[,i],Table$Group,p.adj="none",paired=FALSE)
+  pval_df<-data.frame(ttest_df[[3]])
+  pval_df[is.na(pval_df)] <- 1
+  pval_df_l[[i]]<-pval_df
+  ttest_df_l[[i]]<-ttest_df
+  var_param=colnames(Table)[i]
+  col1<-colorRampPalette(c("red","blue"))(99)
+  corrplot(as.matrix(pval_df),method="number",title=var_param,type="lower",order="original",col=col1,is.corr = FALSE,tl.col="black",mar=c(0,0,3,0),cl.lim =c(0,1))
+}
+#dev.off()
+```
+
+
+# Dimension reduction plots split between groups
+##  Plot showing density of cells
+
+
+ 
+```{r echo=FALSE, fig.align="center", fig.fullwidth=TRUE, fig.height=12, fig.width=12, message=FALSE, warning=FALSE, include=TRUE}
+
+##Cell cluster plots cells per patient and Galaxy plots in one file "PhenographPlotswithGalaxy_"
+
+
+#Run Phenograph analysis from this script using ggplot
+tsnedata=analysis_results$dimReducedRes$tsne
+phenodata=analysis_results$clusterRes$Rphenograph
+
+#Pull sampleIDs
+samplenames=analysis_results$sampleNames
+
+#Add the clusters to the cells
+mergedata=merge(tsnedata,phenodata,by.x=0,by.y=0) #merge by rownames from 1st set = X=0 and the second set y=0
+
+#Add the group status/membership column
+#create a "group" column
+mergedata$group=mergedata$Row.names
+
+#clean up the studyID (very much based on FCS file naming convention); goal to delete all but the closest text to the sample ID
+mergedata$group = gsub("Live CD3_","", mergedata$group)
+
+#table(mergedata$group) checking the file names
+mergedata$group=factor(mergedata$group)
+
+#Now add the group based on the Study ID#, once again based on the study details entirely using the CODEX for this file
+colnames(CODEX)=c("group","condition")
+mergedata <- mergedata %>% left_join(CODEX)
+
+mergedata$y=factor(mergedata$y) #now making the clusters into numbers
+
+mean_tsne=mergedata %>% dplyr::group_by(mergedata$y) %>% dplyr::summarise(tsne_1=median(tsne_1),tsne_2=median(tsne_2)) 
+
+colnames(mean_tsne)[1]="y"
+
+#Create multi-plot file of the galaxy plots and overall dot plots of clusters (next to each other in pairs)
+
+#pdf("_Galaxy.pdf",height = 60,width=40, onefile = T) 
+#mergedata$Row.names[1:10] --again checking how things are working 
+#Now we will plot 2-4 plots, one per group
+
+group_names=unique(mergedata$condition)
+n_groups=length(group_names)
+plot_lista=list()
+plot_listb=list()
+
+for (group_id in group_names){
+  p_a=ggplot(data=data.frame(mergedata[mergedata$condition==group_id,]),aes(x=tsne_1,y=tsne_2,color=y))+geom_point(size=0.1)+ggthemes::theme_par()+ggtitle(group_id)+geom_text(data=mean_tsne,aes(label=y),size=4,color="black")+theme(legend.position = "none")
+  p_b=ggplot(data=data.frame(mergedata[mergedata$condition==group_id,]),aes(x=tsne_1,y=tsne_2))+ggthemes::theme_par()+stat_density_2d(geom="raster",aes(fill=stat(density)),contour=F)+scale_fill_viridis(option="magma")+theme(legend.position = "none")+ggtitle(group_id)
+  p_a=p_a+theme(aspect.ratio=1)
+  p_b=p_b+theme(aspect.ratio=1)
+  plot_lista[[group_id]]=p_a
+  plot_listb[[group_id]]=p_b
+  
+}
+ggarrange(plotlist = c(plot_lista,plot_listb),ncol=n_groups,nrow=2) #change based on number of plots
+#ggarrange(plotlist = list(p1b,p2b),ncol=2,nrow=1) #change based on number of plots
+#dev.off()
+
+
+```
+
+## Cluster frequencies by groups
+
+
+
+```{r, include=TRUE,echo=FALSE,fig.height=8, fig.width=12,message = FALSE}
+
+
+##Stacked Bar Plots for Phenograph Clusters "StackedBarOrdered_"
+
+
+#Must have loaded cytofkit.Rdata
+#Must have loaded Codex.csv
+
+#BUILD FILE
+pheno_clusters<-data.frame(analysis_results$clusterRes)
+pheno_clusters$group<-rownames(pheno_clusters)
+
+#CellID format is PATIENTNUMBER_.... SO need to pull off patient number--very FCS file dependent
+pheno_clusters$group=gsub("Live CD3_","",pheno_clusters$group) #delete shared initial text
+
+
+#CALCULATE PLOTS
+library(dplyr)
+pheno_clusters$Rphenograph<-factor(pheno_clusters$Rphenograph)
+pheno_clusters_counts<-pheno_clusters %>% group_by(condition,Rphenograph) %>% dplyr::summarise(count=dplyr::n()) %>% 
+  mutate(perc=count*100/sum(count))
+pheno_clusters_counts2<-pheno_clusters %>% group_by(Rphenograph,condition) %>%dplyr::summarise(count= dplyr::n()) %>% 
+  mutate(perc=count*100/sum(count))
+
+#PLOT PLOTS UNORDERED
+library(ggplot2)
+#unordered (1-34) plot
+#pdf("_stackedbar.pdf",height =40,width=80, onefile = T)
+p1 = ggplot(data = pheno_clusters_counts2,aes(x=Rphenograph,y=perc,fill=condition))+geom_bar(stat = "identity")+xlab("Cluster")+ylab("Percentage")
+p2 = ggplot(data = pheno_clusters_counts,aes(x=condition,y=perc,fill=Rphenograph))+geom_bar(stat = "identity")
+p1=p1+theme_pubr(base_size = 16)
+p2=p2+theme_pubr(base_size = 16)
+ggarrange(plotlist = list(p1),ncol=1,nrow=1) #change based on number of plots
+#dev.off()
+
+#PLOTS ORDERED BY A GIVEN GROUP'S BARS
+#pdf("_ordered_stackedbar.pdf",height =40,width=80, onefile = T)
+pheno_clusters_counts2_ordered<-pheno_clusters_counts2[pheno_clusters_counts2$condition==group_names[2],]
+pheno_clusters_counts2_ordered<-pheno_clusters_counts2_ordered[order(-pheno_clusters_counts2_ordered$perc),]
+pheno_clusters_counts2$Rphenograph<-factor(pheno_clusters_counts2$Rphenograph,levels = as.character(pheno_clusters_counts2_ordered$Rphenograph))
+pheno_clusters_counts2$condition<-as.character(pheno_clusters_counts2$condition)
+p3=ggplot(data = pheno_clusters_counts2,aes(x=Rphenograph,y=perc,fill=condition))+geom_bar(stat = "identity")+theme_pubr(base_size = 16)+ggtitle("Ordered")
+lvls <- names(sort(tapply(pheno_clusters$condition == group_names[2], pheno_clusters$Rphenograph, mean)))
+
+p4=ggplot(data = pheno_clusters, aes(factor(Rphenograph, levels = lvls), fill = condition)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = percent)+theme_pubr(base_size = 16)+ggtitle("Ordered")+xlab("Cluster")+ylab("Percentage")
+
+ggarrange(plotlist = list(p4),ncol=1,nrow=1) #change based on number of plots
+#dev.off()
+
+```
+
+
+## Bubbleplot of average marker expression in clusters
+
+
+
+```{r, include=TRUE,echo=FALSE,fig.height=12, fig.width=12,message = FALSE,warning=FALSE}
+
+mergedData=data.frame(analysis_results$dimReducedRes$tsne,analysis_results$expressionData,y=analysis_results$clusterRes$Rphenograph)
+
+mergedData$y=factor(mergedData$y)
+#colnames(mergedData)
+#Choosing markers to display by column ids
+
+
+mergedData[,c(3:ncol(mergedData))] %>% group_by(y) %>% summarise_all(.funs = mean) %>% melt(id.vars='y') %>% ggplot(.,aes(x=y,y=variable,size=value,color=value))+geom_point()+theme_par(base_size = 12)+scale_color_gradient2_tableau(palette = 'Temperature Diverging')+xlab("Cluster")
+
+
+```
